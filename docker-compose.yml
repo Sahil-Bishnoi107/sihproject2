@@ -1,0 +1,93 @@
+name: bidguard
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: bidguard
+      POSTGRES_USER: bidguard
+      POSTGRES_PASSWORD: bidguard_dev
+    ports:
+      - "5433:5432" # host 5433 avoids clashing with a locally installed PostgreSQL
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bidguard -d bidguard"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: bidguard
+      MINIO_ROOT_PASSWORD: bidguard_dev_secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  bidguard-ai:
+    build: ./bidguard-ai
+    environment:
+      # Optional: set both to use an LLM for extraction; without them the sidecar uses offline heuristics.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      BIDGUARD_LLM_MODEL: ${BIDGUARD_LLM_MODEL:-}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development # enables Swagger, demo seed accounts and the open Hangfire dashboard
+      ConnectionStrings__Database: Host=postgres;Port=5432;Database=bidguard;Username=bidguard;Password=bidguard_dev
+      Redis__ConnectionString: redis:6379
+      Minio__Endpoint: minio:9000
+      Minio__AccessKey: bidguard
+      Minio__SecretKey: bidguard_dev_secret
+      Sidecar__BaseUrl: http://bidguard-ai:8000/
+      ForwardedHeaders__Enabled: "true" # the web container's nginx forwards client IPs
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      bidguard-ai:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    ports:
+      - "3000:80" # the app: http://localhost:3000
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  miniodata:

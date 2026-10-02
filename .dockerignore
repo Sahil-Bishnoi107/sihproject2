@@ -1,0 +1,16 @@
+.git/
+**/node_modules/
+**/dist/
+**/bin/
+**/obj/
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/TestResults/
+backend/tests/
+bidguard-ai/tests/
+docs/
+samples/
+scripts/
+.env
+**/appsettings.Development.json
